@@ -1,7 +1,7 @@
 # PacketMonitor32
 ESP32 Packet Monitor + SD card!
 
-![PacketMonitor32 Board](https://raw.githubusercontent.com/spacehuhn/PacketMonitor32/master/images/1.jpg)
+![PacketMonitor32 Board](https://raw.githubusercontent.com/hiddenssid/PacketMonitor32_3.5inchRPi_TFT_Screen/master/images/1.jpg)
 
 This is an enhanced version for the ESP32 of my previous [ESP8266 PacketMonitor](https://github.com/spacehuhn/PacketMonitor).  
 It shows you the traffic of all nearby devices on the selected WiFi channel.  
