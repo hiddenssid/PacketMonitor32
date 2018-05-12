@@ -1,5 +1,5 @@
 # PacketMonitor32
-ESP32 Packet Monitor + SD card!
+ESP32 Packet Monitor (sd card not supported)!
 
 ![PacketMonitor32 Board](https://raw.githubusercontent.com/hiddenssid/PacketMonitor32_3.5inchRPi_TFT_Screen/master/images/1.jpg)
 
