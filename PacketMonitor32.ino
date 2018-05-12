@@ -18,17 +18,14 @@
 using namespace std;
 
 /* ===== compile settings ===== */
-#define MAX_CH 14       // 1 - 14 channels (1-11 for US, 1-13 for EU and 1-14 for Japan)
+#define MAX_CH 11       // 1 - 14 channels (1-11 for US, 1-13 for EU and 1-14 for Japan)
 #define SNAP_LEN 2324   // max len of each recieved packet
 
-#define BUTTON_PIN 5    // button to change the channel
+#define BUTTON_PIN 0    // button to change the channel
 
-#define USE_DISPLAY     // comment out if you don't want to use the OLED display
-#define FLIP_DISPLAY    // comment out if you don't like to flip it
-#define SDA_PIN 26
-#define SCL_PIN 27
-#define MAX_X 128
-#define MAX_Y 51
+#define MAX_X 480
+#define MAX_Y 320
+
 
 #if CONFIG_FREERTOS_UNICORE
 #define RUNNING_CORE 0
@@ -36,26 +33,23 @@ using namespace std;
 #define RUNNING_CORE 1
 #endif
 
-#ifdef USE_DISPLAY
-#include "SH1106.h"
-#endif
-
 #include "FS.h"
-#include "SD_MMC.h"
 #include "Buffer.h"
+#include <TFT_eSPI.h> // Hardware-specific library
+#include <SPI.h>
 
 esp_err_t event_handler(void* ctx, system_event_t* event) {
   return ESP_OK;
 }
 
-/* ===== run-time variables ===== */
-Buffer sdBuffer;
-#ifdef USE_DISPLAY
-SH1106 display(0x3c, SDA_PIN, SCL_PIN);
-#endif
-Preferences preferences;
 
-bool useSD = false;
+
+/* ===== run-time variables ===== */
+
+Preferences preferences;
+TFT_eSPI tft = TFT_eSPI();
+
+
 bool buttonPressed = false;
 bool buttonEnabled = true;
 uint32_t lastDrawTime;
@@ -90,35 +84,7 @@ void setChannel(int newChannel) {
   esp_wifi_set_promiscuous(true);
 }
 
-bool setupSD() {
-  if (!SD_MMC.begin()) {
-    Serial.println("Card Mount Failed");
-    return false;
-  }
 
-  uint8_t cardType = SD_MMC.cardType();
-
-  if (cardType == CARD_NONE) {
-    Serial.println("No SD_MMC card attached");
-    return false;
-  }
-
-  Serial.print("SD_MMC Card Type: ");
-  if (cardType == CARD_MMC) {
-    Serial.println("MMC");
-  } else if (cardType == CARD_SD) {
-    Serial.println("SDSC");
-  } else if (cardType == CARD_SDHC) {
-    Serial.println("SDHC");
-  } else {
-    Serial.println("UNKNOWN");
-  }
-
-  uint64_t cardSize = SD_MMC.cardSize() / (1024 * 1024);
-  Serial.printf("SD_MMC Card Size: %lluMB\n", cardSize);
-
-  return true;
-}
 
 void wifi_promiscuous(void* buf, wifi_promiscuous_pkt_type_t type) {
   wifi_promiscuous_pkt_t* pkt = (wifi_promiscuous_pkt_t*)buf;
@@ -136,42 +102,48 @@ void wifi_promiscuous(void* buf, wifi_promiscuous_pkt_type_t type) {
   tmpPacketCounter++;
   rssiSum += ctrl.rssi;
 
-  if (useSD) sdBuffer.addPacket(pkt->payload, packetLength);
 }
 
 void draw() {
-#ifdef USE_DISPLAY
+
   double multiplicator = getMultiplicator();
   int len;
   int rssi;
 
   if (pkts[MAX_X - 1] > 0) rssi = rssiSum / (int)pkts[MAX_X - 1];
   else rssi = rssiSum;
+  
+  tft.setCursor(0, 0);
+  tft.print("Channel " + String(ch));
+  tft.print((" | "));
+  tft.print("Strength " + (String)rssi);
+  tft.print((" | "));
+  tft.println("Packets " + (String)tmpPacketCounter);
+  tft.setCursor(0, 15);
+  tft.print(("Deauths Packets ["));
+  tft.print((String)deauths);
+  tft.print(("]  "));
 
-  display.clear();
-
-  display.setTextAlignment(TEXT_ALIGN_RIGHT);
-  display.drawString( 10, 0, (String)ch);
-  display.drawString( 14, 0, ("|"));
-  display.drawString( 30, 0, (String)rssi);
-  display.drawString( 34, 0, ("|"));
-  display.drawString( 82, 0, (String)tmpPacketCounter);
-  display.drawString( 87, 0, ("["));
-  display.drawString(106, 0, (String)deauths);
-  display.drawString(110, 0, ("]"));
-  display.drawString(114, 0, ("|"));
-  display.drawString(128, 0, (useSD ? "SD" : ""));
-  display.setTextAlignment(TEXT_ALIGN_LEFT);
-  display.drawString( 36,  0, ("Pkts:"));
-
-  display.drawLine(0, 63 - MAX_Y, MAX_X, 63 - MAX_Y);
+  
   for (int i = 0; i < MAX_X; i++) {
     len = pkts[i] * multiplicator;
-    display.drawLine(i, 63, i, 63 - (len > MAX_Y ? MAX_Y : len));
+    if (deauths > 0)
+    {
+      tft.drawLine(i, 319, i, 319 - (len > MAX_Y - 35 ? MAX_Y - 35 : len), TFT_RED);
+    }
+    else
+    {
+      tft.drawLine(i, 319, i, 319 - (len > MAX_Y - 35 ? MAX_Y - 35 : len), TFT_WHITE);
+    }
+
+
+    tft.drawLine(i, 30 , i, 319 - (len > MAX_Y - 30 ? MAX_Y - 30 : len), TFT_BLACK);
     if (i < MAX_X - 1) pkts[i] = pkts[i + 1];
+    tft.drawLine(0, 30, MAX_X, 30, TFT_WHITE);
   }
-  display.display();
-#endif
+  
+
+
 }
 
 /* ===== main program ===== */
@@ -179,6 +151,16 @@ void setup() {
 
   // Serial
   Serial.begin(115200);
+
+
+  //Screen
+  tft.init();
+  tft.setRotation(1);
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextSize(1);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.setTextFont(2);
+
 
   // Settings
   preferences.begin("packetmonitor32", false);
@@ -197,34 +179,10 @@ void setup() {
   ESP_ERROR_CHECK(esp_wifi_start());
 
   esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
-
-  // SD card
-  sdBuffer = Buffer();
-
-  if (setupSD())
-    sdBuffer.open(&SD_MMC);
-
+  
   // I/O
   pinMode(BUTTON_PIN, INPUT_PULLUP);
 
-  // display
-#ifdef USE_DISPLAY
-  display.init();
-#ifdef FLIP_DISPLAY
-  display.flipScreenVertically();
-#endif
-
-  /* show start screen */
-  display.clear();
-  display.setFont(ArialMT_Plain_16);
-  display.drawString(6, 6, "PacketMonitor32");
-  display.setFont(ArialMT_Plain_10);
-  display.drawString(24, 34, "Made with <3 by");
-  display.drawString(29, 44, "@Spacehuhn");
-  display.display();
-
-  delay(1000);
-#endif
 
   // second core
   xTaskCreatePinnedToCore(
@@ -262,15 +220,7 @@ void coreTask( void * p ) {
           buttonPressed = true;
           lastButtonTime = currentTime;
         } else if (currentTime - lastButtonTime >= 2000) {
-          if (useSD) {
-            useSD = false;
-            sdBuffer.close(&SD_MMC);
-            draw();
-          } else {
-            if (setupSD())
-              sdBuffer.open(&SD_MMC);
-            draw();
-          }
+          draw();
           buttonPressed = false;
           buttonEnabled = false;
         }
@@ -283,10 +233,6 @@ void coreTask( void * p ) {
       buttonPressed = false;
       buttonEnabled = true;
     }
-
-    // save buffer to SD
-    if (useSD)
-      sdBuffer.save(&SD_MMC);
 
     // draw Display
     if ( currentTime - lastDrawTime > 1000 ) {
