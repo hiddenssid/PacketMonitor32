@@ -23,6 +23,7 @@ using namespace std;
 
 #define BUTTON_PIN 0    // button to change the channel
 
+
 #define MAX_X 480
 #define MAX_Y 320
 
@@ -34,6 +35,7 @@ using namespace std;
 #endif
 
 #include "FS.h"
+//#include "SD_MMC.h"
 #include "Buffer.h"
 #include <TFT_eSPI.h> // Hardware-specific library
 #include <SPI.h>
@@ -45,11 +47,11 @@ esp_err_t event_handler(void* ctx, system_event_t* event) {
 
 
 /* ===== run-time variables ===== */
-
+//Buffer sdBuffer;
 Preferences preferences;
 TFT_eSPI tft = TFT_eSPI();
 
-
+//bool useSD = false;
 bool buttonPressed = false;
 bool buttonEnabled = true;
 uint32_t lastDrawTime;
@@ -57,6 +59,7 @@ uint32_t lastButtonTime;
 uint32_t tmpPacketCounter;
 uint32_t pkts[MAX_X];       // here the packets per second will be saved
 uint32_t deauths = 0;       // deauth frames per second
+uint32_t auths = 0;
 unsigned int ch = 1;        // current 802.11 channel
 int rssiSum;
 
@@ -82,15 +85,49 @@ void setChannel(int newChannel) {
   esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
   esp_wifi_set_promiscuous_rx_cb(&wifi_promiscuous);
   esp_wifi_set_promiscuous(true);
+
+
 }
 
+/*bool setupSD() {
+  if (!SD_MMC.begin()) {
+    Serial.println("Card Mount Failed");
+    return false;
+  }
 
+  uint8_t cardType = SD_MMC.cardType();
+
+  if (cardType == CARD_NONE) {
+    Serial.println("No SD_MMC card attached");
+    return false;
+  }
+
+  Serial.print("SD_MMC Card Type: ");
+  if (cardType == CARD_MMC) {
+    Serial.println("MMC");
+  } else if (cardType == CARD_SD) {
+    Serial.println("SDSC");
+  } else if (cardType == CARD_SDHC) {
+    Serial.println("SDHC");
+  } else {
+    Serial.println("UNKNOWN");
+  }
+
+  uint64_t cardSize = SD_MMC.cardSize() / (1024 * 1024);
+  Serial.printf("SD_MMC Card Size: %lluMB\n", cardSize);
+
+  return true;
+  }*/
 
 void wifi_promiscuous(void* buf, wifi_promiscuous_pkt_type_t type) {
   wifi_promiscuous_pkt_t* pkt = (wifi_promiscuous_pkt_t*)buf;
   wifi_pkt_rx_ctrl_t ctrl = (wifi_pkt_rx_ctrl_t)pkt->rx_ctrl;
 
   if (type == WIFI_PKT_MGMT && (pkt->payload[0] == 0xA0 || pkt->payload[0] == 0xC0 )) deauths++;
+  if (type == WIFI_PKT_MGMT && (pkt->payload[0] == 0xB0))
+  {
+    auths++; Serial.println("Paquetes "+(String)pkts[MAX_X - 1]);
+  }
 
   if (type == WIFI_PKT_MISC) return;             // wrong packet type
   if (ctrl.sig_len > SNAP_LEN) return;           // packet too long
@@ -102,6 +139,8 @@ void wifi_promiscuous(void* buf, wifi_promiscuous_pkt_type_t type) {
   tmpPacketCounter++;
   rssiSum += ctrl.rssi;
 
+  //if (useSD) sdBuffer.addPacket(pkt->payload, packetLength);
+
 }
 
 void draw() {
@@ -112,24 +151,35 @@ void draw() {
 
   if (pkts[MAX_X - 1] > 0) rssi = rssiSum / (int)pkts[MAX_X - 1];
   else rssi = rssiSum;
-  
+
   tft.setCursor(0, 0);
   tft.print("Channel " + String(ch));
   tft.print((" | "));
   tft.print("Strength " + (String)rssi);
   tft.print((" | "));
-  tft.println("Packets " + (String)tmpPacketCounter);
+  tft.println("Packets " + (String)tmpPacketCounter+"       ");
   tft.setCursor(0, 15);
   tft.print(("Deauths Packets ["));
   tft.print((String)deauths);
-  tft.print(("]  "));
+  tft.print(("]"));
 
-  
+  tft.print((" | "));
+  tft.print(("New connections ["));
+  tft.print((String)auths);
+  tft.print(("]  "));
+  // tft.print((useSD ? "SD" : ""));
+
+
   for (int i = 0; i < MAX_X; i++) {
     len = pkts[i] * multiplicator;
     if (deauths > 0)
     {
       tft.drawLine(i, 319, i, 319 - (len > MAX_Y - 35 ? MAX_Y - 35 : len), TFT_RED);
+    }
+    else if (auths > 0)
+    {
+      tft.drawLine(i, 319, i, 319 - (len > MAX_Y - 35 ? MAX_Y - 35 : len), TFT_BLUE);
+     // authsCo++;
     }
     else
     {
@@ -141,7 +191,7 @@ void draw() {
     if (i < MAX_X - 1) pkts[i] = pkts[i + 1];
     tft.drawLine(0, 30, MAX_X, 30, TFT_WHITE);
   }
-  
+
 
 
 }
@@ -179,7 +229,13 @@ void setup() {
   ESP_ERROR_CHECK(esp_wifi_start());
 
   esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
-  
+
+  //SD card
+  // sdBuffer = Buffer();
+
+  // if (setupSD())
+  //   sdBuffer.open(&SD_MMC);
+
   // I/O
   pinMode(BUTTON_PIN, INPUT_PULLUP);
 
@@ -220,7 +276,15 @@ void coreTask( void * p ) {
           buttonPressed = true;
           lastButtonTime = currentTime;
         } else if (currentTime - lastButtonTime >= 2000) {
+          /* if (useSD) {
+             useSD = false;
+             sdBuffer.close(&SD_MMC);
+             draw();
+            } else {
+             if (setupSD())
+               sdBuffer.open(&SD_MMC);*/
           draw();
+          //  }
           buttonPressed = false;
           buttonEnabled = false;
         }
@@ -234,6 +298,10 @@ void coreTask( void * p ) {
       buttonEnabled = true;
     }
 
+    // save buffer to SD
+    //   if (useSD)
+    //    sdBuffer.save(&SD_MMC);
+
     // draw Display
     if ( currentTime - lastDrawTime > 1000 ) {
       lastDrawTime = currentTime;
@@ -243,10 +311,11 @@ void coreTask( void * p ) {
 
       draw();
 
-      Serial.println((String)pkts[MAX_X - 1]);
+     // Serial.println((String)pkts[MAX_X - 1]);
 
       tmpPacketCounter = 0;
       deauths = 0;
+      auths = 0;
       rssiSum = 0;
     }
 
